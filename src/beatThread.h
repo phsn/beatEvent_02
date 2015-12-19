@@ -1,5 +1,6 @@
 #pragma once
 
+#include <math.h>       /* round, floor, ceil, trunc */
 #include "ofThread.h"
 
 /// This is a simple example of a ThreadedObject created by extending ofThread.
@@ -18,8 +19,11 @@ public:
     ofEvent<ofVec2f> tickEvent;
     ofEvent<ofVec2f> tick8Event;
     ofEvent<ofVec2f> tick16Event;
+    ofEvent<ofVec2f> tickRhythmEvent;
     ofEvent<ofVec2f> barEvent;
     ofEvent<ofVec2f> bpmChange;
+    ofEvent<ofVec2f> rhythmMaskChange;
+
     
     /// Start the thread.
     void start()
@@ -70,28 +74,47 @@ public:
         return BPM;
     }
     
+    vector<bool> getRhythmMask() {
+        return rhythmMask;
+    }
+    
+    
+    void setRhythmMask(vector<bool> newMask) {
+        rhythmMask.clear();
+        for(int i=0; i < newMask.size(); i++) {
+            rhythmMask.push_back(newMask[i]);
+        }
+    }
+    
     /// Our implementation of threadedFunction.
     void threadedFunction()
     {
+        for(int i=0; i < 16; i++) {
+            rhythmMask.push_back(false);
+        }
         while(isThreadRunning())
         {
             // Attempt to lock the mutex.  If blocking is turned on,
             if(lock())
             {
                 if(SYNC) {
-                    beatStart = ofGetElapsedTimef()-tickTime-tickTime/8.0f-0.1;
+                    beatStart = ofGetElapsedTimef()-tickTime*(5.0f/8.0f);
                     barStart = beatStart;
                     tickStart = beatStart;
                     tick8Start = tickStart;
                     tick16Start = tickStart;
+                    lastRhythmTap = 0;
                     beatState = 0;
                     beat8State = 0;
+                    beat16State = 0;
                     SYNC = false;
                 }
                 
                 if(ofGetElapsedTimef()-tick16Start >= tickTime/4.0f) {
                     this->tick();
                 }
+                
+                
                 sleep(10);
                 unlock();
             }
@@ -122,11 +145,14 @@ public:
                 if(beatState == 0) {
                     ofVec2f bData = ofVec2f(tickStart, beatState);
                     ofNotifyEvent(barEvent, bData, this);
+                    if(ofGetElapsedTimef()-lastRhythmTap >= tickTime*4) {
+                        recordRhythm = false;
+                    }
                 }
                 beatState = (beatState+1)%4;
                 if(beatState == 0) barStart = tickStart;
                 tickStart += tickTime;
-                
+                //cout << "TICK " << beatState << endl;
             }
             
             beat8State = (beat8State+1)%8;
@@ -134,11 +160,46 @@ public:
             
             
         }
+        
+        if(rhythmMask[int(beat16State)%16]) {
+            ofVec2f tData = ofVec2f(tick16Start, beat16State);
+            ofNotifyEvent(tickRhythmEvent, tData, this);
+        }
+        
         beat16State = (beat16State+1)%16;
         tick16Start += tickTime/4.0f;
         
         //}
         
+    }
+    
+    void rhythmTap() {
+        float t = ofGetElapsedTimef()-tickTime*(3.0f/4.0f);
+        if(recordRhythm) {
+            if(t >= recordStart) {
+                if(firstRecord) {
+                    rhythmMask.clear();
+                    for(int i=0; i < 16; i++) {
+                        rhythmMask.push_back(false);
+                    }
+                    firstRecord = false;
+                }
+                if(t >= tickTime*4.0f) {
+                    recordStart = barStart;
+                }
+                float deltaTime = t-recordStart;
+                int R_beatState = int(round(16.0f*deltaTime/(tickTime*4.0f))+8)%16;
+                rhythmMask[R_beatState] = true;
+                //cout << R_beatState << endl;
+            }
+            ofVec2f tData = ofVec2f(t, beatState);
+            ofNotifyEvent(rhythmMaskChange, tData, this);
+        } else {
+            recordRhythm = true;
+            firstRecord = true;
+            recordStart = barStart+4*tickTime;
+            lastRhythmTap = t;
+        }
     }
     
     void tap() {
@@ -194,6 +255,12 @@ protected:
     float last16Tick;
     float lastTap;
     vector<float> tapTimes;
+    
+    vector<bool> rhythmMask;
+    float lastRhythmTap;
+    bool recordRhythm = false;
+    float recordStart;
+    bool firstRecord = false;
     
     bool SYNC;
     
